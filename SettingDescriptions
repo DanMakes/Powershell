@@ -1,0 +1,46 @@
+#This is the location of the logs directory
+$LogsDirectory = "C:\Scripts\Logs"
+#This pulls the current date and formats the output to be MM-DD-YYYY
+$TodaysDate = Get-Date -UFormat "%m-%d-%Y"
+#Check to see if there are files that exist past 32 days. If so, delete those files.
+Get-ChildItem "$LogsDirectory\*.*" | Where-Object LastWriteTime -LT (Get-Date).AddDays(-32) | Remove-Item -Confirm:$false
+#Start the transcript. Do not overwrite if the same name already exists
+Start-Transcript -Path "$LogsDirectory\SetDescriptionLog$TodaysDate.txt" -NoClobber
+#Call the secure credentials for the script to use
+$MyCredentials = Import-Clixml -Path "C:\Scripts\SecureDomainCredentials.xml"
+#Define the First VI Server
+$HPVIServer = "Server1"
+#Define the Second VI Server
+$GBVIServer = "Server2"
+#Define the Domain Controller
+$DomainController = Get-ADDomainController -Identity "DomainController"
+#Connect to the First server using the secure credentials
+Connect-VIServer -Server $HPVIServer -Credential $MyCredentials
+#Connect to the Second server using the secure credentials
+Connect-VIServer -Server $GBVIServer -Credential $MyCredentials
+#Define the OU that contains the computer objects that are in scope, and populate the description property
+$ADComputerObjects = Get-ADComputer -Server $DomainController -SearchBase "OU=AndSoForth,OU=AndSoOn,OU=NextLevel,DC=company,DC=com" -Filter * -Properties "Description"
+
+foreach ($ADComputerObject in $ADComputerObjects)
+
+    {
+        #Define the computer object's description as a variable
+        $ADComputerObjectDesc = $ADComputerObject.Description
+        #Locate and variablize all operating system properties on the local computer
+        $LocalComputerDesc = Get-CimInstance -ComputerName $ADComputerObject.Name -ClassName "Win32_OperatingSystem" -Property *
+        #Tell the current description to assume the new value
+        $LocalComputerDesc.Description = $ADComputerObjectDesc
+        #Call the vSphere VM by way of the AD name (to ensure accuracy)
+        $vSphereName = Get-VM -Name $ADComputerObject.Name
+        #Set the new value on the local computer to match Active Directory
+        Set-CimInstance -ComputerName $ADComputerObject.Name -InputObject $LocalComputerDesc
+        #Set the new value on the vSphere server to match Active Directory
+        Set-VM -VM $vSphereName -Description $ADComputerObjectDesc -Confirm:$false
+    }
+
+#Disconnect from the First Park VI server
+Disconnect-VIServer -Server $HPVIServer -Confirm:$false
+#Disconnect from the Second VI server
+Disconnect-VIServer -Server $GBVIServer -Confirm:$false
+#Stop the transcript
+Stop-Transcript
